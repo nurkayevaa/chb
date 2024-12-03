@@ -1,80 +1,65 @@
+from dotenv import load_dotenv
 import streamlit as st
-from langchain.chat_models import ChatOpenAI
-from langchain.document_loaders import UnstructuredFileLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
-from xml.etree import ElementTree as ET
+from user_utils import *
 
-# Streamlit app setup
-st.title("XML File to Chatbot")
-st.markdown("Upload an XML file to create a chatbot.")
+#Creating session variables
+if 'HR_tickets' not in st.session_state:
+    st.session_state['HR_tickets'] =[]
+if 'IT_tickets' not in st.session_state:
+    st.session_state['IT_tickets'] =[]
+if 'Transport_tickets' not in st.session_state:
+    st.session_state['Transport_tickets'] =[]
 
-# Upload XML file
-uploaded_file = st.file_uploader("Upload your XML file", type=["xml"])
 
-if uploaded_file:
-    try:
-        # Parse the XML file
-        st.info("Parsing the XML file...")
-        tree = ET.parse(uploaded_file)
-        root = tree.getroot()
+def main():
+    load_dotenv()
 
-        # Extract data from XML
-        def parse_element(element):
-            """
-            Recursive function to extract text content from XML elements.
-            """
-            if element.text and element.text.strip():
-                return element.text.strip()
+    st.header("Automatic Ticket Classification Tool")
+    #Capture user input
+    st.write("We are here to help you, please ask your question:")
+    user_input = st.text_input("🔍")
+
+    if user_input:
+
+        #creating embeddings instance
+        embeddings=create_embeddings()
+
+        #Function to pull index data from Pinecone
+        index=pull_from_pinecone("e697b71c-d5ed-4c66-8625-ac1c403a2df1","us-west1-gcp-free","tickets",embeddings)
+        
+        #This function will help us in fetching the top relevent documents from our vector store - Pinecone Index
+        relavant_docs=get_similar_docs(index,user_input)
+
+        #This will return the fine tuned response by LLM
+        response=get_answer(relavant_docs,user_input)
+        st.write(response)
+
+        
+        #Button to create a ticket with respective department
+        button = st.button("Submit ticket?")
+
+        if button:
+            #Get Response
+            
+
+            embeddings = create_embeddings()
+            query_result = embeddings.embed_query(user_input)
+
+            #loading the ML model, so that we can use it to predit the class to which this compliant belongs to...
+            department_value = predict(query_result)
+            st.write("your ticket has been sumbitted to : "+department_value)
+
+            #Appending the tickets to below list, so that we can view/use them later on...
+            if department_value=="HR":
+                st.session_state['HR_tickets'].append(user_input)
+            elif department_value=="IT":
+                st.session_state['IT_tickets'].append(user_input)
             else:
-                return " ".join(parse_element(child) for child in element)
+                st.session_state['Transport_tickets'].append(user_input)
 
-        data = parse_element(root)
-        st.success("XML file parsed successfully!")
 
-        # Split data into smaller chunks for embedding
-        st.info("Splitting data into chunks...")
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = text_splitter.split_text(data)
-        st.success(f"Data split into {len(chunks)} chunks.")
 
-        # Embed data using LangChain
-        st.info("Embedding data using LangChain...")
-        embeddings = OpenAIEmbeddings()
-        vectorstore = FAISS.from_texts(chunks, embeddings)
-        st.success("Data embedded successfully!")
+if __name__ == '__main__':
+    main()
 
-        # Set up the chatbot
-        st.info("Setting up the chatbot...")
-        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 2})
-        qa_chain = ConversationalRetrievalChain.from_llm(
-            llm=ChatOpenAI(model="gpt-4"),
-            retriever=retriever,
-            return_source_documents=True,
-        )
-        st.success("Chatbot is ready!")
 
-        # Chatbot interface
-        st.markdown("### Chat with your data")
-        if "chat_history" not in st.session_state:
-            st.session_state["chat_history"] = []
-
-        user_input = st.text_input("Ask a question:")
-        if user_input:
-            response = qa_chain({"question": user_input, "chat_history": st.session_state["chat_history"]})
-            answer = response["answer"]
-            st.session_state["chat_history"].append((user_input, answer))
-
-            # Display chat history
-            for i, (question, answer) in enumerate(st.session_state["chat_history"]):
-                st.markdown(f"**Q{i+1}:** {question}")
-                st.markdown(f"**A{i+1}:** {answer}")
-
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-
-# Footer
-st.markdown("---")
-st.markdown("Powered by LangChain, OpenAI, and Streamlit.")
